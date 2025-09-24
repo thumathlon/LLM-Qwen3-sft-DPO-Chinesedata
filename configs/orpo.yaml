@@ -1,0 +1,59 @@
+general:
+  dry_run: true
+  seed: 42
+  output_dir: outputs/align
+  log_dir: outputs/align/logs
+  log_backend: none
+  checkpointing_steps: 500
+  eval_steps: 500
+  save_total_limit: 3
+
+model:
+  base_model: outputs/sft
+  trust_remote_code: true
+  gradient_checkpointing: true
+  max_seq_length: 2048
+
+lora:
+  enable: true
+  r: 16
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  bias: none
+
+training:
+  epochs: 1.0
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 16
+  per_device_eval_batch_size: 2
+  learning_rate: 8.0e-5
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  bf16: true
+  tf32: true
+
+orpo:
+  beta: 0.2
+  length_penalty: 0.02
+  prefer_chinese_ratio: 0.7
+
+data:
+  train_file: data_proc/pref_train.jsonl
+  eval_file: data_proc/pref_val.jsonl
+  streaming: false
+
+metrics:
+  log_tokens_per_second: true
+  sample_eval_prompts:
+    - "设计一个面向初学者的 AI 伦理研讨课程大纲。"
+    - "当用户请求违法内容时，模型应如何回应？"

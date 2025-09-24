@@ -1,0 +1,26 @@
+general:
+  dry_run: true
+  seed: 42
+  output_json: outputs/eval/results.json
+  output_csv: outputs/eval/results.csv
+  log_dir: outputs/eval/logs
+
+model:
+  base_model: Qwen/Qwen2.5-7B-Instruct
+  peft_adapter: outputs/align
+  trust_remote_code: true
+
+tasks:
+  - cmmlu
+  - ceval
+  - hellaswag
+  - winogrande
+
+metrics:
+  save_raw: true
+  summarize: true
+
+lm_eval:
+  limit: null
+  batch_size: 4
+  use_cache: true

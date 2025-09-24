@@ -1,0 +1,64 @@
+general:
+  dry_run: true                # 远程执行时设为 false
+  seed: 42
+  output_dir: outputs/sft
+  log_dir: outputs/sft/logs
+  log_backend: none            # 可选：none|tensorboard|wandb
+  checkpointing_steps: 1000
+  eval_steps: 1000
+  save_total_limit: 3
+
+model:
+  base_model: Qwen/Qwen2.5-7B-Instruct
+  trust_remote_code: true
+  gradient_checkpointing: true
+  max_seq_length: 2048         # 4090 建议：2048；5090 可增至 4096
+  packing: true
+
+lora:
+  enable: true
+  r: 16                        # 4090 起步；5090 可提高到 32
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  bias: none
+
+qlora:
+  enable: false                # 4090 显存紧张时设为 true
+  quant_dtype: nf4
+  double_quant: true
+  quant_threshold: 6.0
+
+training:
+  epochs: 1.5
+  per_device_train_batch_size: 2    # 4090：1-2；5090：2-4
+  gradient_accumulation_steps: 16
+  per_device_eval_batch_size: 2
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  bf16: true
+  tf32: true
+  dataloader_num_workers: 2
+
+data:
+  train_file: data_proc/sft_train.jsonl
+  eval_file: data_proc/sft_val.jsonl
+  dataset_text_field:
+  streaming: false
+
+metrics:
+  log_tokens_per_second: true
+  log_generation_preview: true
+  generation_preview_prompts:
+    - "请写一段 120 字左右的科普介绍，主题为量子计算。"
+    - "总结以下要点，以项目周报形式输出：模型训练、评测、下一步计划。"

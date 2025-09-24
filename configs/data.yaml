@@ -1,0 +1,52 @@
+# 数据准备配置（默认 d=4090/5090 单卡通用）
+general:
+  dry_run: true            # 默认仅打印计划；远程执行时设为 false
+  seed: 42
+  min_cn_ratio: 0.3
+  allow_english_fallback: false
+  data_root: data_raw
+  proc_root: data_proc
+  stage: all                # 可选：all|sft|pref
+
+sft:
+  max_samples: 60000
+  mix:
+    oasst1: 0.4
+    coig: 0.6
+  curriculum:
+    enabled: false          # 课程式混合（默认关闭）
+    phases:
+      - start: 0.0
+        end: 0.4
+        weights:
+          short_form: 0.6
+          long_form: 0.4
+      - start: 0.4
+        end: 1.0
+        weights:
+          short_form: 0.3
+          long_form: 0.7
+
+preference:
+  max_samples: 120000
+  mix:
+    coig_pc_core: 0.4
+    ultrafeedback: 0.2
+    shp: 0.2
+    hh_rlhf: 0.1
+    saferlhf: 0.1
+
+length_buckets:
+  - name: short
+    min_tokens: 0
+    max_tokens: 256
+  - name: medium
+    min_tokens: 257
+    max_tokens: 1024
+  - name: long
+    min_tokens: 1025
+    max_tokens: 2048
+
+logging:
+  output_dir: outputs/logs
+  verbosity: info

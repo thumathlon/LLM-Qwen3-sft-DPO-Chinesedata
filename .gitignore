@@ -1,0 +1,22 @@
+# Python cache and virtualenvs
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# Data and model artifacts (generated remotely)
+data_raw/
+data_proc/
+outputs/
+logs/
+checkpoints/
+
+# Hugging Face caches
+.cache/
+
+# Misc
+*.log
+*.tmp
+

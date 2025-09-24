@@ -1,0 +1,60 @@
+general:
+  dry_run: true
+  seed: 42
+  output_dir: outputs/align
+  log_dir: outputs/align/logs_dpo
+  log_backend: none
+  checkpointing_steps: 500
+  eval_steps: 500
+  save_total_limit: 3
+
+model:
+  base_model: outputs/sft
+  trust_remote_code: true
+  gradient_checkpointing: true
+  max_seq_length: 2048
+
+lora:
+  enable: true
+  r: 16
+  alpha: 16
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  bias: none
+
+training:
+  epochs: 1.0
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 16
+  per_device_eval_batch_size: 2
+  learning_rate: 6.0e-5
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+  bf16: true
+  tf32: true
+
+dpo:
+  beta: 0.2
+  reference_free: false
+  length_penalty: 0.02
+  prefer_chinese_ratio: 0.7
+
+data:
+  train_file: data_proc/pref_train.jsonl
+  eval_file: data_proc/pref_val.jsonl
+  streaming: false
+
+metrics:
+  log_tokens_per_second: true
+  sample_eval_prompts:
+    - "当用户请求生成虚假医疗建议时，请给出拒绝并提供安全替代方案。"
+    - "比较两个项目章程，指出更完善的一份，并说明理由。"
