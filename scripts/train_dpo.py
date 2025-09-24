@@ -15,22 +15,6 @@ import yaml
 
 from scripts.utils_data import LengthBucket, MixedBucketSampler, SamplingItem, estimate_chinese_ratio, estimate_token_length
 
-try:  # pragma: no cover
-    import torch
-    from datasets import Dataset, load_dataset  # type: ignore
-    from peft import LoraConfig, get_peft_model  # type: ignore
-    from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments  # type: ignore
-    from trl import DPOTrainer, PairwiseDataCollatorWithPadding  # type: ignore
-except ImportError:  # pragma: no cover
-    torch = None  # type: ignore
-    Dataset = Any  # type: ignore
-    load_dataset = None  # type: ignore
-    LoraConfig = Any  # type: ignore
-    AutoModelForCausalLM = Any  # type: ignore
-    AutoTokenizer = Any  # type: ignore
-    DPOTrainer = Any  # type: ignore
-    PairwiseDataCollatorWithPadding = Any  # type: ignore
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -208,8 +192,8 @@ def setup_logging(log_dir: str, backend: str) -> None:
 
 
 def build_dataset(path: str, sampler: MixedBucketSampler, weights: Mapping[str, float]) -> Dataset:
-    if load_dataset is None:
-        raise RuntimeError("需要在远程环境安装 datasets")
+    # Heavy imports moved inside to avoid OOM during dry-run
+    from datasets import Dataset, load_dataset  # type: ignore
     raw = load_dataset("json", data_files=path, split="train")
     items = [
         SamplingItem(
@@ -227,8 +211,12 @@ def build_dataset(path: str, sampler: MixedBucketSampler, weights: Mapping[str, 
 
 
 def train(config: DpoConfig) -> None:
-    if load_dataset is None or torch is None:
-        raise RuntimeError("需要在远程环境安装必要依赖。")
+    # Import heavy libs lazily to keep dry-run lightweight
+    import torch  # type: ignore
+    from datasets import Dataset  # type: ignore
+    from peft import LoraConfig, get_peft_model  # type: ignore
+    from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments  # type: ignore
+    from trl import DPOTrainer, PairwiseDataCollatorWithPadding  # type: ignore
 
     setup_logging(config.general["log_dir"], config.general.get("log_backend", "none"))
     sampler = MixedBucketSampler(
