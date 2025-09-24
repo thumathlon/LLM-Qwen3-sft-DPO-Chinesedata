@@ -89,7 +89,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 SFT_SPECS: Mapping[str, Mapping[str, Optional[str]]] = {
     "oasst1": {"hf_path": "OpenAssistant/oasst1", "config": None, "split": "train"},
-    "coig": {"hf_path": "BAAI/COIG", "config": "COIG", "split": "train"},
+    # COIG 使用默认配置（'default'），并需要信任远端代码以加载自定义脚本
+    "coig": {"hf_path": "BAAI/COIG", "config": None, "split": "train"},
 }
 
 PREF_SPECS: Mapping[str, Mapping[str, Optional[str]]] = {
@@ -588,7 +589,13 @@ def execute_pipeline(config: Mapping[str, Any]) -> None:
         sft_entries: List[Mapping[str, Any]] = []
         for key, meta in SFT_SPECS.items():
             LOGGER.info("加载 SFT 数据集 %s", key)
-            ds = load_dataset(meta["hf_path"], name=meta["config"], split=meta["split"], cache_dir=str(data_root / key))
+            ds = load_dataset(
+                meta["hf_path"],
+                name=meta["config"],
+                split=meta["split"],
+                cache_dir=str(data_root / key),
+                trust_remote_code=True,
+            )
             records = convert_coig_entries(ds) if key == "coig" else convert_oasst_tree(ds)
             filtered = filter_by_language(records, min_cn_ratio, allow_english)
             quality_checked = filter_by_quality(
@@ -623,7 +630,13 @@ def execute_pipeline(config: Mapping[str, Any]) -> None:
         pref_entries: List[Mapping[str, Any]] = []
         for key, meta in PREF_SPECS.items():
             LOGGER.info("加载偏好数据集 %s", key)
-            ds = load_dataset(meta["hf_path"], name=meta["config"], split=meta["split"], cache_dir=str(data_root / key))
+            ds = load_dataset(
+                meta["hf_path"],
+                name=meta["config"],
+                split=meta["split"],
+                cache_dir=str(data_root / key),
+                trust_remote_code=True,
+            )
             mapped = [normalize_preference(key, row) for row in ds]
             prepared = [item for item in mapped if item]
             filtered = filter_by_language(prepared, min_cn_ratio, allow_english)
