@@ -587,7 +587,11 @@ def execute_pipeline(config: Mapping[str, Any]) -> None:
 
     if stage in ("all", "sft"):
         sft_entries: List[Mapping[str, Any]] = []
+        sft_weights: Mapping[str, float] = config.get("sft", {}).get("mix", {})
         for key, meta in SFT_SPECS.items():
+            if sft_weights and float(sft_weights.get(key, 0.0)) <= 0.0:
+                LOGGER.info("跳过 SFT 数据集 %s（权重=0）", key)
+                continue
             LOGGER.info("加载 SFT 数据集 %s", key)
             ds = load_dataset(
                 meta["hf_path"],
@@ -628,7 +632,11 @@ def execute_pipeline(config: Mapping[str, Any]) -> None:
 
     if stage in ("all", "pref"):
         pref_entries: List[Mapping[str, Any]] = []
+        pref_weights: Mapping[str, float] = config.get("preference", {}).get("mix", {})
         for key, meta in PREF_SPECS.items():
+            if pref_weights and float(pref_weights.get(key, 0.0)) <= 0.0:
+                LOGGER.info("跳过 偏好数据集 %s（权重=0）", key)
+                continue
             LOGGER.info("加载偏好数据集 %s", key)
             ds = load_dataset(
                 meta["hf_path"],
