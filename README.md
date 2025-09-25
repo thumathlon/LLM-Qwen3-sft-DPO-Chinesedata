@@ -37,6 +37,14 @@ python scripts/export_lora.py --config configs/sft.yaml --dry-run false
 - 评测超时：减少 `configs/eval.yaml` 中任务或降低 `lm_eval.batch_size`。
 - 日志后端异常：若未安装 tensorboard/wandb，则保持 `log_backend=none`。
 
+### 使用本地 COIG 数据，避免再次下载
+
+- 将从网页或 hf-cli 下载的 COIG 文件（如 `*.jsonl`/`*.json`）放到项目目录 `data_raw/coig/` 下。
+- 本项目已支持本地优先：若检测到 `data_raw/coig/*.jsonl|*.json`，`prepare_data` 会直接用本地文件，不再联网下载。
+- 命令示例（只处理 COIG 的 SFT，并跳过 OASST）：
+  - `python -m scripts.prepare_data --config configs/data.yaml --stage sft --sft-mix coig=1.0,oasst1=0.0 --dry-run false`
+- 如仅想先跑 OASST：把 `coig=0.0`，后续网络可用或本地文件就绪后再把权重设回 >0 重跑 SFT。
+
 ### 数据质量与采样提示
 
 - 质量过滤开关：`configs/data.yaml -> general.{min_tokens,max_tokens,max_repetition}`，中文重复度按字符 n-gram 计算。

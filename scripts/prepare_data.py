@@ -593,13 +593,23 @@ def execute_pipeline(config: Mapping[str, Any]) -> None:
                 LOGGER.info("跳过 SFT 数据集 %s（权重=0）", key)
                 continue
             LOGGER.info("加载 SFT 数据集 %s", key)
-            ds = load_dataset(
-                meta["hf_path"],
-                name=meta["config"],
-                split=meta["split"],
-                cache_dir=str(data_root / key),
-                trust_remote_code=True,
-            )
+            # 如 data_raw/<key>/ 下存在本地 JSON/JSONL 文件，则优先使用本地文件，避免再下载
+            local_dir = data_root / key
+            local_jsons: List[str] = []
+            if key == "coig" and local_dir.exists():
+                for pattern in ("*.jsonl", "*.json"):
+                    local_jsons.extend([str(p) for p in local_dir.glob(pattern)])
+            if key == "coig" and local_jsons:
+                LOGGER.info("检测到本地 COIG 文件，共 %d 个，优先使用本地数据", len(local_jsons))
+                ds = load_dataset("json", data_files=local_jsons, split="train")
+            else:
+                ds = load_dataset(
+                    meta["hf_path"],
+                    name=meta["config"],
+                    split=meta["split"],
+                    cache_dir=str(local_dir),
+                    trust_remote_code=True,
+                )
             records = convert_coig_entries(ds) if key == "coig" else convert_oasst_tree(ds)
             filtered = filter_by_language(records, min_cn_ratio, allow_english)
             quality_checked = filter_by_quality(
