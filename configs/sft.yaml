@@ -1,9 +1,9 @@
-general:
-  dry_run: true                # 远程执行时设为 false
+﻿general:
+  dry_run: true                # 杩滅▼鎵ц鏃惰涓?false
   seed: 42
   output_dir: outputs/sft
   log_dir: outputs/sft/logs
-  log_backend: none            # 可选：none|tensorboard|wandb
+  log_backend: none            # 鍙€夛細none|tensorboard|wandb
   checkpointing_steps: 1000
   eval_steps: 1000
   save_total_limit: 3
@@ -12,12 +12,12 @@ model:
   base_model: Qwen/Qwen2.5-7B-Instruct
   trust_remote_code: true
   gradient_checkpointing: true
-  max_seq_length: 2048         # 4090 建议：2048；5090 可增至 4096
+  max_seq_length: 4096         # 与数据处理上限一致，提升长序列适配性
   packing: true
 
 lora:
   enable: true
-  r: 16                        # 4090 起步；5090 可提高到 32
+  r: 16                        # 4090 璧锋锛?090 鍙彁楂樺埌 32
   alpha: 16
   dropout: 0.05
   target_modules:
@@ -31,14 +31,14 @@ lora:
   bias: none
 
 qlora:
-  enable: false                # 4090 显存紧张时设为 true
+  enable: false                # 4090 鏄惧瓨绱у紶鏃惰涓?true
   quant_dtype: nf4
   double_quant: true
   quant_threshold: 6.0
 
 training:
   epochs: 1.5
-  per_device_train_batch_size: 2    # 4090：1-2；5090：2-4
+  per_device_train_batch_size: 2    # 4090锛?-2锛?090锛?-4
   gradient_accumulation_steps: 16
   per_device_eval_batch_size: 2
   learning_rate: 2.0e-4
@@ -60,5 +60,5 @@ metrics:
   log_tokens_per_second: true
   log_generation_preview: true
   generation_preview_prompts:
-    - "请写一段 120 字左右的科普介绍，主题为量子计算。"
-    - "总结以下要点，以项目周报形式输出：模型训练、评测、下一步计划。"
+    - "璇峰啓涓€娈?120 瀛楀乏鍙崇殑绉戞櫘浠嬬粛锛屼富棰樹负閲忓瓙璁＄畻銆?
+    - "鎬荤粨浠ヤ笅瑕佺偣锛屼互椤圭洰鍛ㄦ姤褰㈠紡杈撳嚭锛氭ā鍨嬭缁冦€佽瘎娴嬨€佷笅涓€姝ヨ鍒掋€?
