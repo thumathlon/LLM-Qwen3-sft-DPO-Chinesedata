@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 """Supervised fine-tuning (SFT) with LoRA/QLoRA and dry-run planning."""
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from scripts.utils_data import (
     merge_messages,
 )
 
-try:  # pragma: no cover - 需在远程环境安装依�?    import torch
+try:  # pragma: no cover - 需在远程环境安装依?    import torch
     from datasets import Dataset, load_dataset  # type: ignore
     from peft import LoraConfig, get_peft_model  # type: ignore
     from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback, TrainingArguments  # type: ignore
@@ -118,8 +118,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "log_tokens_per_second": True,
         "log_generation_preview": True,
         "generation_preview_prompts": [
-            "请写一�?120 字的量子计算科普�?,
-            "总结本周项目进展，格式为项目周报�?,
+            "请写一段约120字的量子计算科普。",
+            "总结本周项目进展，按项目周报格式输出。",
         ],
     },
 }
@@ -129,7 +129,7 @@ class MetricsCallback(TrainerCallback):  # pragma: no cover - 仅在远程运行
     def on_log(self, args, state, control, logs=None, **kwargs):
         if logs is None:
             return
-        LOGGER.info("训练日志�?s", {k: round(v, 4) for k, v in logs.items() if isinstance(v, (int, float))})
+        LOGGER.info("训练日志?s", {k: round(v, 4) for k, v in logs.items() if isinstance(v, (int, float))})
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -193,7 +193,7 @@ def dry_run_report(config: SFTConfig) -> None:
         except Exception:
             pass
     est_steps = math.ceil(estimated_samples / max(1, total_batch))
-    LOGGER.info("估算训练步数: ~%s (基于 %d 条样�?", est_steps, estimated_samples)
+    LOGGER.info("估算训练步数: ~%s (基于 %d 条样?", est_steps, estimated_samples)
     sampler = MixedBucketSampler(
         length_buckets=[LengthBucket(name="generic", min_tokens=0, max_tokens=config.model.get("max_seq_length", 2048))],
         target_cn_ratio=0.7,
@@ -206,7 +206,7 @@ def dry_run_report(config: SFTConfig) -> None:
             SamplingItem("dry-en", "SHP", 320, 0.2, {"prompt": "demo"}),
         ],
     )
-    LOGGER.info("采样器示例统�? %s", plan.stats)
+    LOGGER.info("采样器示例统? %s", plan.stats)
     LOGGER.info(
         "LoRA 配置：r=%s alpha=%s dropout=%.2f",
         config.lora.get("r"),
@@ -224,7 +224,7 @@ def setup_logging(log_dir: str, backend: str) -> None:
 
             SummaryWriter(log_dir)
         except ImportError:
-            LOGGER.warning("tensorboard 未安装，忽略该后�?)
+            LOGGER.warning("tensorboard 未安装，忽略")
     elif backend == "wandb":  # pragma: no cover
         import wandb  # type: ignore
 
@@ -255,7 +255,7 @@ def apply_sampler(dataset: Dataset, sampler: MixedBucketSampler, weights: Option
             )
         )
     plan = sampler.plan(total_samples=len(records), available_items=records, source_weights=weights)
-    LOGGER.info("采样后样本数�?d", len(plan.selected))
+    LOGGER.info("采样后样本数: %d", len(plan.selected))
     return Dataset.from_list([item.payload for item in plan.selected])
 
 
@@ -269,7 +269,8 @@ def build_formatting_function(tokenizer) -> Callable[[Mapping[str, Any]], str]:
                     tokenize=False,
                     add_generation_prompt=False,
                 )
-            except Exception:  # pragma: no cover - 保底退�?                pass
+            except Exception:  # pragma: no cover
+                pass
         text = example.get("text")
         if isinstance(text, str) and text.strip():
             return text
@@ -284,7 +285,7 @@ def build_formatting_function(tokenizer) -> Callable[[Mapping[str, Any]], str]:
 
 def train(config: SFTConfig) -> None:
     if load_dataset is None or torch is None:
-        raise RuntimeError("需要在远程环境安装 transformers/trl/peft 等依赖�?)
+        raise RuntimeError("需要在远程环境安装 transformers/trl/peft 等依赖")
 
     setup_logging(config.general["log_dir"], config.general.get("log_backend", "none"))
 
@@ -298,7 +299,7 @@ def train(config: SFTConfig) -> None:
         data_path = config.data.get(file_key)
         if not data_path:
             continue
-        LOGGER.info("加载数据�?s", data_path)
+        LOGGER.info("加载数据?s", data_path)
         dataset = build_dataset(data_path)
         datasets[split_name] = apply_sampler(dataset, sampler, weights=config.data.get("mix"))
 

@@ -1,4 +1,4 @@
-"""Shared data utilities for the LLM fine-tuning pipeline.
+﻿"""Shared data utilities for the LLM fine-tuning pipeline.
 
 This module contains reusable helpers for text normalization, language ratio
 estimation, n-gram repetition detection, SHA256 deduplication and curriculum
@@ -207,7 +207,7 @@ class MixedBucketSampler:
         desired_cn = int(round(total_samples * self.target_cn_ratio))
         if not self.allow_english_fallback and len(chinese_pool) < desired_cn:
             LOGGER.warning(
-                "可用中文样本不足：当�?%d，目�?%d。采样量将按中文池截断；可考虑启用 allow_english_fallback 或降�?target_cn_ratio�?,
+                "可用中文样本不足：当前=%d，目标=%d。采样量将按中文池截断；可考虑启用 allow_english_fallback 或降低 target_cn_ratio",
                 len(chinese_pool),
                 desired_cn,
             )
@@ -312,4 +312,6 @@ __all__ = [
     "merge_messages",
 ]
 LOGGER = logging.getLogger(__name__)
+
+
 

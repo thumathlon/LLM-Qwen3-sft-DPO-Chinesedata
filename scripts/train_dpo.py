@@ -91,8 +91,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "metrics": {
         "log_tokens_per_second": True,
         "sample_eval_prompts": [
-            "当用户请求虚假医疗建议时，请给出拒绝并提供安全替代方案�?,
-            "比较两个项目章程，指出更完善的一份，并说明理由�?,
+            "当用户请求生成虚假医疗建议时，请拒绝并提供安全替代方案。",
+            "比较两个项目章程，指出更完善的一份，并说明理由。",
         ],
     },
 }
@@ -145,13 +145,13 @@ def apply_cli_overrides(config: DpoConfig, args: argparse.Namespace) -> DpoConfi
 
 
 def dry_run_report(config: DpoConfig) -> None:
-    LOGGER.info("Dry-run 模式：不会加载模�?)
+    LOGGER.info("Dry-run 模式：打印计划与检查项")
     train_path = Path(config.data["train_file"])
     eval_path = Path(config.data["eval_file"])
-    LOGGER.info("训练数据�?s (存在=%s)", train_path, train_path.exists())
-    LOGGER.info("验证数据�?s (存在=%s)", eval_path, eval_path.exists())
+    LOGGER.info("训练数据: %s (存在=%s)", train_path, train_path.exists())
+    LOGGER.info("验证数据: %s (存在=%s)", eval_path, eval_path.exists())
     total_batch = config.training["per_device_train_batch_size"] * config.training["gradient_accumulation_steps"]
-    LOGGER.info("估算梯度步数：~%s", math.ceil(120000 / max(1, total_batch)))
+    LOGGER.info("估算总步数: ~%s", math.ceil(120000 / max(1, total_batch)))
     sampler = MixedBucketSampler(
         length_buckets=[LengthBucket(name="generic", min_tokens=0, max_tokens=config.model.get("max_seq_length", 2048))],
         target_cn_ratio=config.dpo.get("prefer_chinese_ratio", 0.7),
@@ -165,7 +165,7 @@ def dry_run_report(config: DpoConfig) -> None:
         ],
         source_weights=config.data.get("mix", {}),
     )
-    LOGGER.info("采样器示例统�? %s", plan.stats)
+    LOGGER.info("采样器示例统? %s", plan.stats)
     LOGGER.info("DPO β=%s , reference_free=%s", config.dpo.get("beta"), config.dpo.get("reference_free"))
 
 
@@ -200,7 +200,7 @@ def build_dataset(path: str, sampler: MixedBucketSampler, weights: Mapping[str, 
         for row in raw
     ]
     plan = sampler.plan(total_samples=len(items), available_items=items, source_weights=weights)
-    LOGGER.info("采样后样本数�?d", len(plan.selected))
+    LOGGER.info("采样后样本数: %d", len(plan.selected))
     return Dataset.from_list([item.payload for item in plan.selected])
 
 
@@ -224,7 +224,7 @@ def train(config: DpoConfig) -> None:
     for split_name, file_key in (("train", "train_file"), ("eval", "eval_file")):
         path = config.data.get(file_key)
         if path:
-            LOGGER.info("加载偏好数据�?s", path)
+            LOGGER.info("加载偏好数据?s", path)
             datasets[split_name] = build_dataset(path, sampler, weights)
 
     tokenizer = AutoTokenizer.from_pretrained(config.model["base_model"], trust_remote_code=config.model.get("trust_remote_code", False))

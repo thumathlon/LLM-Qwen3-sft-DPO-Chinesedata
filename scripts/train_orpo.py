@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 """Offline ORPO training script with dry-run planning."""
 
 from __future__ import annotations
@@ -112,8 +112,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "metrics": {
         "log_tokens_per_second": True,
         "sample_eval_prompts": [
-            "设计一�?AI 伦理研讨课程大纲�?,
-            "当用户请求违法内容时如何拒答并给出替代方案？",
+            "设计一个面向初学者的 AI 伦理研讨课程大纲。",
+            "当用户请求违法内容时，模型应如何回应？",
         ],
     },
 }
@@ -166,13 +166,13 @@ def apply_cli_overrides(config: OrpoConfig, args: argparse.Namespace) -> OrpoCon
 
 
 def dry_run_report(config: OrpoConfig) -> None:
-    LOGGER.info("Dry-run 模式：不会加载模�?)
+    LOGGER.info("采样后样本数: %d", len(plan.selected))
     train_path = Path(config.data["train_file"])
     eval_path = Path(config.data["eval_file"])
-    LOGGER.info("偏好训练数据�?s (存在=%s)", train_path, train_path.exists())
-    LOGGER.info("偏好验证数据�?s (存在=%s)", eval_path, eval_path.exists())
+    LOGGER.info("采样后样本数: %d", len(plan.selected))
+    LOGGER.info("采样后样本数: %d", len(plan.selected))
     total_batch = config.training["per_device_train_batch_size"] * config.training["gradient_accumulation_steps"]
-    LOGGER.info("估算梯度步数：~%s", math.ceil(120000 / max(1, total_batch)))
+    LOGGER.info("采样后样本数: %d", len(plan.selected))
     sampler = MixedBucketSampler(
         length_buckets=[LengthBucket(name="generic", min_tokens=0, max_tokens=config.model.get("max_seq_length", 2048))],
         target_cn_ratio=config.orpo.get("prefer_chinese_ratio", 0.7),
@@ -186,8 +186,8 @@ def dry_run_report(config: OrpoConfig) -> None:
         ],
         source_weights=config.data.get("mix", {}),
     )
-    LOGGER.info("采样器示例统�? %s", plan.stats)
-    LOGGER.info("ORPO β=%s , 长度惩罚=%.3f", config.orpo.get("beta"), config.orpo.get("length_penalty"))
+    LOGGER.info("采样后样本数: %d", len(plan.selected))
+    LOGGER.info("采样后样本数: %d", len(plan.selected))
 
 
 def setup_logging(log_dir: str, backend: str) -> None:
@@ -208,7 +208,7 @@ def setup_logging(log_dir: str, backend: str) -> None:
 
 def build_dataset(path: str, sampler: MixedBucketSampler, weights: Mapping[str, float]) -> Dataset:
     if load_dataset is None:
-        raise RuntimeError("需要在远程环境安装 datasets")
+        raise RuntimeError("需要在远程环境安装必要依赖")
     raw = load_dataset("json", data_files=path, split="train")
     items = [
         SamplingItem(
@@ -221,13 +221,13 @@ def build_dataset(path: str, sampler: MixedBucketSampler, weights: Mapping[str, 
         for row in raw
     ]
     plan = sampler.plan(total_samples=len(items), available_items=items, source_weights=weights)
-    LOGGER.info("采样后样本数�?d", len(plan.selected))
+    LOGGER.info("采样后样本数: %d", len(plan.selected))
     return Dataset.from_list([item.payload for item in plan.selected])
 
 
 def train(config: OrpoConfig) -> None:
     if load_dataset is None or torch is None:
-        raise RuntimeError("需要在远程环境安装必要依赖�?)
+        raise RuntimeError("需要在远程环境安装必要依赖")
 
     setup_logging(config.general["log_dir"], config.general.get("log_backend", "none"))
     sampler = MixedBucketSampler(
@@ -241,7 +241,6 @@ def train(config: OrpoConfig) -> None:
     for split_name, file_key in (("train", "train_file"), ("eval", "eval_file")):
         path = config.data.get(file_key)
         if path:
-            LOGGER.info("加载偏好数据�?s", path)
             datasets[split_name] = build_dataset(path, sampler, weights)
 
     tokenizer = AutoTokenizer.from_pretrained(config.model["base_model"], trust_remote_code=config.model.get("trust_remote_code", False))
@@ -313,7 +312,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     train(config)
-    LOGGER.info("ORPO 训练完成")
+    LOGGER.info("采样后样本数: %d", len(plan.selected))
     return 0
 
 
