@@ -100,7 +100,9 @@ SFT_SPECS: Mapping[str, Mapping[str, Optional[str]]] = {
 PREF_SPECS: Mapping[str, Mapping[str, Optional[str]]] = {
     "dpo_en_zh_20k": {
         "hf_path": "llamafactory/DPO-En-Zh-20k",
-        "config": None,
+        # This dataset requires a config name: "en" or "zh".
+        # Default to Chinese; can be overridden via CLI (see --pref-configs).
+        "config": "zh",
         "split": "train",
     },
 }
@@ -122,6 +124,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--sft-mix", type=str, default=None, help="格式：key=weight,key=weight")
     parser.add_argument("--pref-mix", type=str, default=None, help="格式：key=weight,key=weight")
     parser.add_argument("--seed", type=int, default=None)
+    # Map of preference dataset configs, e.g. "dpo_en_zh_20k=zh" or "dpo_en_zh_20k=en"
+    parser.add_argument("--pref-configs", type=str, default=None, help="格式：key=config, 如 dpo_en_zh_20k=zh")
     parser.add_argument("--dry-run", type=str, default=None, help="true/false, defaults to true")
     parser.add_argument("--log-level", type=str, default="INFO")
     return parser.parse_args(argv)
@@ -167,6 +171,18 @@ def parse_mix_string(text: Optional[str]) -> Dict[str, float]:
     return result
 
 
+def parse_kv_string(text: Optional[str]) -> Dict[str, str]:
+    if not text:
+        return {}
+    out: Dict[str, str] = {}
+    for part in text.split(","):
+        if not part.strip() or "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
 def resolve_config(config: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
     # general
     gen = config.setdefault("general", {})
@@ -196,6 +212,9 @@ def resolve_config(config: Dict[str, Any], args: argparse.Namespace) -> Dict[str
     mix = parse_mix_string(args.pref_mix)
     if mix:
         pref_cfg["mix"] = mix
+    cfg_overrides = parse_kv_string(args.pref_configs)
+    if cfg_overrides:
+        pref_cfg["configs"] = cfg_overrides
 
     return config
 
@@ -254,12 +273,67 @@ def check_paths(config: Mapping[str, Any]) -> None:
 
 
 def convert_mxode_chinese_instruct(records: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Robustly normalize Chinese-Instruct records to messages schema.
+
+    Supports both single-turn alpaca-like fields and multi-turn messages.
+    """
     examples: List[Dict[str, Any]] = []
     for idx, record in enumerate(records):
-        instruction = normalize_text(str(record.get("instruction", "")))
-        input_text = normalize_text(str(record.get("input", "")))
-        output = normalize_text(str(record.get("output", "") or record.get("response", "")))
-        if not instruction or not output:
+        # 1) If messages or conversations present, prefer them
+        if isinstance(record.get("messages"), list):
+            msgs = [m for m in record.get("messages", []) if isinstance(m, Mapping)]
+            # Ensure roles are normalized to user/assistant and content is str
+            norm_msgs: List[Dict[str, str]] = []
+            for m in msgs:
+                role = str(m.get("role") or m.get("from") or "").lower()
+                if role in {"human", "user"}:
+                    role = "user"
+                elif role in {"assistant", "gpt", "bot"}:
+                    role = "assistant"
+                content = normalize_text(str(m.get("content") or m.get("value") or ""))
+                if not content:
+                    continue
+                norm_msgs.append({"role": role, "content": content})
+            if len(norm_msgs) >= 2:
+                joined = merge_messages(norm_msgs)
+                examples.append(
+                    {
+                        "id": f"mxode-{idx}",
+                        "source": "MXODE_CHINESE_INSTRUCT",
+                        "messages": norm_msgs,
+                        "hash": hash_for_text(joined),
+                    }
+                )
+                continue
+
+        # 2) Fallback to instruction/input/output-style fields
+        def pick_first(record: Mapping[str, Any], *keys: str) -> str:
+            for k in keys:
+                v = record.get(k)
+                if isinstance(v, str) and normalize_text(v):
+                    return normalize_text(v)
+            return ""
+
+        instruction = pick_first(
+            record,
+            "instruction",
+            "query",
+            "question",
+            "prompt",
+            "title",
+            "task",
+        )
+        input_text = pick_first(record, "input", "context")
+        output = pick_first(
+            record,
+            "output",
+            "response",
+            "answer",
+            "target",
+            "completion",
+            "text",
+        )
+        if not (instruction and output):
             continue
         user_turn = instruction if not input_text else f"{instruction}\n\n{input_text}"
         joined = "\n".join([user_turn, output])
@@ -582,9 +656,13 @@ def execute_pipeline(config: Mapping[str, Any]) -> None:
                 LOGGER.info("Skip preference source %s due to zero weight", key)
                 continue
             LOGGER.info("Loading preference source %s", key)
+            # Resolve dataset config name (e.g., 'en'/'zh') from CLI or default spec
+            pref_cfg_map: Mapping[str, str] = config.get("preference", {}).get("configs", {})  # type: ignore[assignment]
+            cfg_name = pref_cfg_map.get(key) if isinstance(pref_cfg_map, Mapping) else None
+            cfg_name = cfg_name or meta["config"]
             ds = load_dataset(
                 meta["hf_path"],
-                name=meta["config"],
+                name=cfg_name,
                 split=meta["split"],
                 cache_dir=str(data_root / key),
                 trust_remote_code=True,
@@ -647,4 +725,3 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-
