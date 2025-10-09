@@ -8,6 +8,7 @@ import csv
 import json
 import logging
 from pathlib import Path
+import os
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 import yaml
@@ -97,28 +98,52 @@ def dry_run_summary(config: Mapping[str, Any]) -> None:
 def run_evaluation(config: Mapping[str, Any]) -> None:
     try:  # pragma: no cover
         from lm_eval import evaluator
-        from lm_eval.models.huggingface import HFLM
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("需要在远程环境安装 lm-eval-harness") from exc
 
+    # 环境准备：HF 缓存与数据集自定义代码信任
+    hf_home = os.environ.get("HF_HOME") or str(Path("/root/autodl-tmp/hf_cache").absolute())
+    os.environ["HF_HOME"] = hf_home
+    Path(hf_home).mkdir(parents=True, exist_ok=True)
+    # 允许 datasets 运行远程自定义代码（如 cmmlu 等）
+    os.environ.setdefault("HF_DATASETS_TRUST_REMOTE_CODE", "1")
+
     model_cfg = config["model"]
-    model_args: Dict[str, Any] = {
-        "pretrained": model_cfg["base_model"],
-        "trust_remote_code": model_cfg.get("trust_remote_code", False),
-        "batch_size": config["lm_eval"].get("batch_size", 4),
-    }
+    # 使用 lm-eval 的注册名 "hf"，避免直接依赖具体模块路径（不同版本有变动）
+    hf_model_name = "hf"
+    # 以字符串形式传入 model_args，兼容 lm-eval 的解析器
+    arg_items = [
+        f"pretrained={model_cfg['base_model']}",
+        f"trust_remote_code={str(model_cfg.get('trust_remote_code', False))}",
+    ]
     peft_adapter = model_cfg.get("peft_adapter")
     if peft_adapter:
-        model_args["peft"] = peft_adapter
-    lm = HFLM(**model_args)
+        arg_items.append(f"peft={peft_adapter}")
+    model_args_str = ",".join(arg_items)
     eval_tasks = config.get("tasks", [])
+    # 处理缓存文件路径（lm-eval 0.4.9.1 期望字符串路径或 None）
+    use_cache_cfg = config["lm_eval"].get("use_cache", True)
+    if use_cache_cfg:
+        cache_dir = Path(config["general"].get("log_dir", "outputs/eval/logs"))
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        use_cache_value = str((cache_dir / "lm_cache.db").absolute())
+    else:
+        use_cache_value = None
+
     eval_kwargs = {
         "tasks": eval_tasks,
-        "model": lm,
+        "model": hf_model_name,
+        "model_args": model_args_str,
         "bootstrap_iters": 100,
         "limit": config["lm_eval"].get("limit"),
-        "cache": config["lm_eval"].get("use_cache", True),
-        "log_samples": False,
+        # 0.4.9.1 使用 use_cache 参数（字符串路径或 None）
+        "use_cache": use_cache_value,
+        "batch_size": config["lm_eval"].get("batch_size", 4),
+        "apply_chat_template": True,
+        "torch_random_seed": config["general"].get("seed", 42),
+        "numpy_random_seed": config["general"].get("seed", 42),
+        "random_seed": config["general"].get("seed", 42),
+        "confirm_run_unsafe_code": True,
     }
     results = evaluator.simple_evaluate(**eval_kwargs)
 

@@ -7,13 +7,13 @@ general:
 
 model:
   base_model: Qwen/Qwen2.5-7B-Instruct
-  peft_adapter: outputs/align
+  peft_adapter: outputs/sft
   trust_remote_code: true
 
 tasks:
-  - cmmlu
-  - ceval
-  - hellaswag
+#  - cmmlu
+  - ceval-valid 
+#  - hellaswag
   - winogrande
 
 metrics:

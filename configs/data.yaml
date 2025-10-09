@@ -3,20 +3,22 @@ general:
   dry_run: true              # 本地默认仅打印计划；远程执行设为 false
   seed: 42
   min_cn_ratio: 0.3
-  allow_english_fallback: false
+  allow_english_fallback: true
   data_root: data_raw
   proc_root: data_proc
   stage: all                 # 可选：all|sft|pref
   # 统一限制样本长度，注意回复长度一般在 4096 tokens 以下
-  min_tokens: 8
+  min_tokens: 4
   max_tokens: 4096
   max_repetition: 0.6
 
 sft:
   # 训练数据量建议：单卡 4090/5090 初学项目可从 60k 起步
-  max_samples: 60000
+  max_samples: 40000
   mix:
-    mxode_chinese_instruct: 1.0
+    mxode_stem: 0.5
+    mxode_commonsense: 0.3
+    mxode_general: 0.2
   curriculum:
     enabled: false           # 课程式混合（默认关闭）
     phases:

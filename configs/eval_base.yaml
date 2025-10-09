@@ -1,0 +1,18 @@
+# 基线模型评估配置
+# 与 eval.yaml 的主要区别在于：
+# 1. model.peft_adapter 设置为 null，这样就不会加载 LoRA 适配器。
+# 2. general.*_path 指向新的目录 outputs/eval-base/，以保存基线模型的评估结果。
+
+general:
+  output_json: "outputs/eval-base/results.json"
+  output_csv: "outputs/eval-base/results.csv"
+  log_dir: "outputs/eval-base/logs"
+
+model:
+  base_model: "Qwen/Qwen2.5-7B-Instruct"
+  # 设置为 null 或移除此行，以确保只评估基线模型
+  peft_adapter: null
+
+tasks:
+  - "ceval-valid"
+  - "winogrande"

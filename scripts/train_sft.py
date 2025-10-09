@@ -23,7 +23,10 @@ from scripts.utils_data import (
     merge_messages,
 )
 
-try:  # pragma: no cover - 需在远程环境安装依?    import torch
+torch = None  # will be overwritten if torch imports successfully
+
+try:  # pragma: no cover - 需在远程环境安装依赖
+    import torch
     from datasets import Dataset, load_dataset  # type: ignore
     from peft import LoraConfig, get_peft_model  # type: ignore
     from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback, TrainingArguments  # type: ignore
@@ -129,7 +132,7 @@ class MetricsCallback(TrainerCallback):  # pragma: no cover - 仅在远程运行
     def on_log(self, args, state, control, logs=None, **kwargs):
         if logs is None:
             return
-        LOGGER.info("训练日志?s", {k: round(v, 4) for k, v in logs.items() if isinstance(v, (int, float))})
+        LOGGER.info("训练日志: %s", {k: round(v, 4) for k, v in logs.items() if isinstance(v, (int, float))})
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -287,6 +290,9 @@ def train(config: SFTConfig) -> None:
     if load_dataset is None or torch is None:
         raise RuntimeError("需要在远程环境安装 transformers/trl/peft 等依赖")
 
+    if config.qlora.get("enable"):
+        raise ValueError("当前脚本仅支持 LoRA 训练，请在配置中将 qlora.enable 设为 false")
+
     setup_logging(config.general["log_dir"], config.general.get("log_backend", "none"))
 
     datasets = {}
@@ -299,7 +305,7 @@ def train(config: SFTConfig) -> None:
         data_path = config.data.get(file_key)
         if not data_path:
             continue
-        LOGGER.info("加载数据?s", data_path)
+        LOGGER.info("加载数据：%s", data_path)
         dataset = build_dataset(data_path)
         datasets[split_name] = apply_sampler(dataset, sampler, weights=config.data.get("mix"))
 
@@ -309,22 +315,14 @@ def train(config: SFTConfig) -> None:
     )
     tokenizer.padding_side = "right"
 
-    model_kwargs: Dict[str, Any] = {}
-    if config.qlora.get("enable"):
-        model_kwargs.update(
-            {
-                "load_in_4bit": True,
-                "bnb_4bit_quant_type": config.qlora.get("quant_dtype", "nf4"),
-                "bnb_4bit_use_double_quant": config.qlora.get("double_quant", True),
-            }
-        )
-
     model = AutoModelForCausalLM.from_pretrained(
         config.model["base_model"],
         trust_remote_code=config.model.get("trust_remote_code", False),
         torch_dtype=torch.bfloat16 if config.training.get("bf16") else None,
-        **model_kwargs,
     )
+
+    if config.model.get("gradient_checkpointing", False):
+        model.gradient_checkpointing_enable()
 
     if config.lora.get("enable"):
         lora_cfg = LoraConfig(
@@ -335,11 +333,16 @@ def train(config: SFTConfig) -> None:
             target_modules=config.lora.get("target_modules"),
         )
         model = get_peft_model(model, lora_cfg)
+        model.print_trainable_parameters()
 
     dataset_text_field = config.data.get("dataset_text_field")
     formatting_func = None
     if not dataset_text_field:
         formatting_func = build_formatting_function(tokenizer)
+
+    report_to = config.general.get("log_backend")
+    if report_to in {None, "none"}:
+        report_to = None
 
     training_args = TrainingArguments(
         output_dir=config.general["output_dir"],
@@ -354,13 +357,15 @@ def train(config: SFTConfig) -> None:
         max_grad_norm=config.training["max_grad_norm"],
         logging_dir=config.general["log_dir"],
         logging_steps=50,
-        evaluation_strategy="steps",
+        eval_strategy="steps" if config.general["eval_steps"] else "no",
         eval_steps=config.general["eval_steps"],
+        save_strategy="steps",
         save_steps=config.general["checkpointing_steps"],
         save_total_limit=config.general["save_total_limit"],
         gradient_checkpointing=config.model.get("gradient_checkpointing", False),
         bf16=config.training.get("bf16", False),
         tf32=config.training.get("tf32", False),
+        report_to=[report_to] if report_to else None,
     )
 
     trainer = SFTTrainer(

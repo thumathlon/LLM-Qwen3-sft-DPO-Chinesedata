@@ -17,7 +17,7 @@ model:
 
 lora:
   enable: true
-  r: 16                        # 4090 璧锋锛?090 鍙彁楂樺埌 32
+  r: 8                       
   alpha: 16
   dropout: 0.05
   target_modules:
@@ -26,22 +26,22 @@ lora:
     - v_proj
     - o_proj
     - gate_proj
-    - up_proj
-    - down_proj
+#    - up_proj
+#    - down_proj
   bias: none
 
 qlora:
-  enable: false                # 4090 鏄惧瓨绱у紶鏃惰涓?true
+  enable: false               
   quant_dtype: nf4
   double_quant: true
   quant_threshold: 6.0
 
 training:
   epochs: 1.5
-  per_device_train_batch_size: 2    # 4090锛?-2锛?090锛?-4
-  gradient_accumulation_steps: 16
+  per_device_train_batch_size: 4    
+  gradient_accumulation_steps: 8
   per_device_eval_batch_size: 2
-  learning_rate: 2.0e-4
+  learning_rate: 5.0e-5
   lr_scheduler_type: cosine
   warmup_ratio: 0.03
   weight_decay: 0.01
@@ -60,5 +60,5 @@ metrics:
   log_tokens_per_second: true
   log_generation_preview: true
   generation_preview_prompts:
-    - "璇峰啓涓€娈?120 瀛楀乏鍙崇殑绉戞櫘浠嬬粛锛屼富棰樹负閲忓瓙璁＄畻銆?
-    - "鎬荤粨浠ヤ笅瑕佺偣锛屼互椤圭洰鍛ㄦ姤褰㈠紡杈撳嚭锛氭ā鍨嬭缁冦€佽瘎娴嬨€佷笅涓€姝ヨ鍒掋€?
+    - "请写一段约120字的通俗科普介绍，主题是量子计算。"
+    - "请以项目周报形式总结以下要点：模型训练、评测、下一步计划。"

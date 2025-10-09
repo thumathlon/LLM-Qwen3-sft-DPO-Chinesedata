@@ -26,7 +26,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import random
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
@@ -48,9 +51,11 @@ from scripts.utils_data import (
 
 try:  # pragma: no cover - only needed on remote for real runs
     from datasets import Dataset, load_dataset  # type: ignore
+    from datasets import DownloadConfig  # type: ignore
 except ImportError:  # pragma: no cover
     Dataset = Any  # type: ignore
     load_dataset = None  # type: ignore
+    DownloadConfig = None  # type: ignore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -90,12 +95,35 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 
 SFT_SPECS: Mapping[str, Mapping[str, Optional[str]]] = {
+    # 保留一个向后兼容的入口：加载整个 Chinese-Instruct（如数据集默认聚合）
     "mxode_chinese_instruct": {
         "hf_path": "Mxode/Chinese-Instruct",
         "config": None,
         "split": "train",
     },
 }
+
+# 将“虚拟源”映射到 HF 的子集配置名，便于按类别配比
+# 可根据需要微调归类：
+# - STEM: 仅使用 stem_zh
+# - 常识: 以中文推理/常识为主（这里选 chinese-reasoning-distil 与 coig-cqia）
+# - 普通对话: 大规模中文通用指令数据集
+MXODE_GROUPS: Mapping[str, Sequence[str]] = {
+    "mxode_stem": [
+        "stem_zh",
+    ],
+    "mxode_commonsense": [
+        "chinese-reasoning-distil",
+        "coig-cqia",
+    ],
+    "mxode_general": [
+        "magpie",
+        "firefly",
+        "infinity-instruct",
+        "neo_sft_phase2",
+    ],
+}
+
 
 PREF_SPECS: Mapping[str, Mapping[str, Optional[str]]] = {
     "dpo_en_zh_20k": {
@@ -259,7 +287,7 @@ def check_paths(config: Mapping[str, Any]) -> None:
     """Log existing/missing dataset directories (dry-run safe)."""
 
     data_root = Path(config["general"]["data_root"])
-    expected = [data_root / key for key in [*SFT_SPECS.keys(), *PREF_SPECS.keys()]]
+    expected = [data_root / key for key in [*SFT_SPECS.keys(), *PREF_SPECS.keys(), *MXODE_GROUPS.keys()]]
     for path in expected:
         if path.exists():
             LOGGER.info("Found existing dataset directory: %s", path)
@@ -354,6 +382,42 @@ def convert_mxode_chinese_instruct(records: Sequence[Mapping[str, Any]]) -> List
 def normalize_preference(source_key: str, record: Mapping[str, Any]) -> Optional[Dict[str, str]]:
     """Normalize preference pair records into unified schema (robust mapping)."""
 
+    # Handle llamafactory/DPO-En-Zh-20k specifically
+    if source_key == "dpo_en_zh_20k":
+        # 优先采用官方 conversations 结构
+        convs = record.get("conversations", [])
+        if isinstance(convs, list) and convs and isinstance(convs[0], Mapping) and "value" in convs[0]:
+            prompt = normalize_text(convs[0]["value"]) or ""
+            chosen_obj = record.get("chosen", {})
+            rejected_obj = record.get("rejected", {})
+            chosen = normalize_text(chosen_obj.get("value", "") if isinstance(chosen_obj, dict) else "")
+            rejected = normalize_text(rejected_obj.get("value", "") if isinstance(rejected_obj, dict) else "")
+            if prompt and chosen and rejected:
+                joined = "\n".join([prompt, chosen, rejected])
+                return {
+                    "prompt": prompt,
+                    "chosen": chosen,
+                    "rejected": rejected,
+                    "source": source_key.upper(),
+                    "hash": hash_for_text(joined),
+                }
+        # 回退：兼容简化的 prompt/chosen/rejected 结构（用于内联样例与潜在清洗后的数据）
+        prompt = normalize_text(str(record.get("prompt", "")))
+        chosen = normalize_text(str(record.get("chosen", "")))
+        rejected = normalize_text(str(record.get("rejected", "")))
+        if prompt and chosen and rejected:
+            joined = "\n".join([prompt, chosen, rejected])
+            return {
+                "prompt": prompt,
+                "chosen": chosen,
+                "rejected": rejected,
+                "source": source_key.upper(),
+                "hash": hash_for_text(joined),
+            }
+        # 否则返回 None（由上层统计跳过）
+        return None
+
+    # Generic fallback for other datasets
     def pick(*keys: str) -> str:
         for key in keys:
             value = record.get(key)
@@ -367,13 +431,7 @@ def normalize_preference(source_key: str, record: Mapping[str, Any]) -> Optional
     chosen = normalize_text(str(record.get("chosen", "")))
     rejected = normalize_text(str(record.get("rejected", "")))
 
-    if source_key == "dpo_en_zh_20k":
-        chosen = chosen or pick("chosen_response", "answer_chosen", "chosen_text")
-        rejected = rejected or pick("rejected_response", "answer_rejected", "rejected_text")
-        if not prompt:
-            prompt = pick("input", "context")
-
-    # Fallbacks
+    # Fallbacks for generic datasets
     prompt = prompt or pick("input", "context", "question")
     if not chosen:
         chosen = pick("better_response", "response_good", "answer_a")
@@ -570,8 +628,35 @@ def dry_run_summary(config: Mapping[str, Any]) -> None:
 
 
 def execute_pipeline(config: Mapping[str, Any]) -> None:
+    def hf_load_dataset(dataset_path: str, *, name: Optional[str], split: str, cache_dir: str, dl_conf: Optional["DownloadConfig"], retries: int = 5) -> Dataset:
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, retries + 1):
+            try:
+                return load_dataset(  # type: ignore[misc]
+                    dataset_path,
+                    name=name,
+                    split=split,
+                    cache_dir=cache_dir,
+                    trust_remote_code=True,
+                    download_config=dl_conf,
+                )
+            except Exception as e:  # 网络中断/ChunkedEncoding 等
+                last_exc = e
+                wait = min(60, 2 ** attempt)
+                LOGGER.warning("load_dataset failed (attempt %d/%d): %s; retry in %ds", attempt, retries, type(e).__name__, wait)
+                time.sleep(wait)
+        assert last_exc is not None
+        raise last_exc
     if load_dataset is None:
         raise RuntimeError("datasets package not available; cannot run real data pipeline")
+
+    # Enable progress bars and verbose logging for datasets
+    try:
+        from datasets.utils.logging import set_verbosity_info, enable_progress_bar
+        set_verbosity_info()
+        enable_progress_bar()
+    except ImportError:
+        LOGGER.warning("datasets logging utils not available; progress bars may be disabled")
 
     general_cfg = config["general"]
     data_root = Path(general_cfg["data_root"])  # caches/hf local json
@@ -593,49 +678,147 @@ def execute_pipeline(config: Mapping[str, Any]) -> None:
     if stage in ("all", "sft"):
         sft_entries: List[Mapping[str, Any]] = []
         sft_weights: Mapping[str, float] = config.get("sft", {}).get("mix", {})
-        for key, meta in SFT_SPECS.items():
-            if sft_weights and float(sft_weights.get(key, 0.0)) <= 0.0:
+        # 统一下载配置：开启断点续传并加大重试次数
+        dl_conf = DownloadConfig(resume_download=True, max_retries=10) if DownloadConfig else None
+
+        # --------------------------------------------------------------------
+        # 优化：一次性加载所有需要的 Mxode 子集，避免重复下载
+        # --------------------------------------------------------------------
+        all_mxode_subsets_needed: Dict[str, str] = {}  # subset_name -> group_key
+        for group_key, subsets in MXODE_GROUPS.items():
+            if group_key in sft_weights and float(sft_weights.get(group_key, 0.0)) > 0.0:
+                for subset in subsets:
+                    all_mxode_subsets_needed[subset] = group_key
+        
+        loaded_mxode_datasets: Dict[str, Dataset] = {}
+        if all_mxode_subsets_needed:
+            LOGGER.info(
+                "Found %d Mxode/Chinese-Instruct subsets to load: %s",
+                len(all_mxode_subsets_needed),
+                ", ".join(all_mxode_subsets_needed.keys()),
+            )
+            # 使用统一的缓存目录
+            unified_cache_dir = str(data_root / "mxode_chinese_instruct_unified")
+            for subset_name in all_mxode_subsets_needed.keys():
+                LOGGER.info("Loading subset '%s'...", subset_name)
+                loaded_mxode_datasets[subset_name] = hf_load_dataset(
+                    "Mxode/Chinese-Instruct",
+                    name=subset_name,
+                    split="train",
+                    cache_dir=unified_cache_dir,
+                    dl_conf=dl_conf,
+                )
+            LOGGER.info("All Mxode subsets loaded.")
+
+        # 若 mix 中已包含任一 MXODE_GROUPS 键，则忽略默认的 mxode_chinese_instruct 以避免重复加载
+        weights_iter: Mapping[str, float] = dict(sft_weights)
+        if any(group_key in sft_weights for group_key in MXODE_GROUPS.keys()) and "mxode_chinese_instruct" in sft_weights:
+            LOGGER.info("Detected SFT subset groups in mix; ignoring default 'mxode_chinese_instruct' entry")
+            weights_iter = dict(weights_iter)
+            weights_iter["mxode_chinese_instruct"] = 0.0
+        # 只遍历用户在 mix 中声明的键，便于精确控制配比
+        for key, weight in weights_iter.items():
+            if float(weight) <= 0.0:
                 LOGGER.info("Skip SFT source %s due to zero weight", key)
                 continue
-            LOGGER.info("Loading SFT source %s", key)
-            # Prefer local JSON/JSONL under data_raw/<key>/ if present
-            local_dir = data_root / key
-            local_jsons: List[str] = []
-            if key == "mxode_chinese_instruct" and local_dir.exists():
-                for pattern in ("*.jsonl", "*.json"):
-                    local_jsons.extend([str(p) for p in local_dir.glob(pattern)])
-            if key == "mxode_chinese_instruct" and local_jsons:
+
+            # 情况 1：虚拟分组（映射到多个 HF 子集）
+            if key in MXODE_GROUPS:
+                subset_names = MXODE_GROUPS[key]
+                LOGGER.info("Processing SFT group %s with %d subsets: %s", key, len(subset_names), ", ".join(subset_names))
+
+                # 使用 ProcessPoolExecutor 并行处理子集
+                # 限制 worker 数量，避免在 IO 密集和 CPU 密集混合场景下过度消耗资源
+                max_workers = min(len(subset_names), (os.cpu_count() or 4))
+                with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    futures = []
+                    for subset_name in subset_names:
+                        ds = loaded_mxode_datasets.get(subset_name)
+                        if ds is None:
+                            LOGGER.warning("Dataset for subset '%s' was not loaded, skipping.", subset_name)
+                            continue
+                        
+                        # 提交任务到进程池
+                        future = executor.submit(
+                            process_sft_subset,
+                            subset_name=subset_name,
+                            dataset=ds,
+                            min_cn_ratio=min_cn_ratio,
+                            allow_english=allow_english,
+                            min_tokens=min_tokens,
+                            max_tokens=max_tokens,
+                            max_repetition=max_repetition,
+                            config=config,
+                            weight=weight,
+                            num_subsets=len(subset_names),
+                            seed=seed,
+                            group_key=key,
+                        )
+                        futures.append(future)
+
+                    # 收集结果
+                    for future in as_completed(futures):
+                        try:
+                            result_entries = future.result()
+                            sft_entries.extend(result_entries)
+                        except Exception as exc:
+                            LOGGER.error("A worker process generated an exception: %s", exc, exc_info=True)
+                
+                LOGGER.info("Finished processing SFT group %s. Total entries so far: %d", key, len(sft_entries))
+                continue
+
+            # 情况 2：单一数据源（向后兼容）
+            if key in SFT_SPECS:
+                meta = SFT_SPECS[key]
+                LOGGER.info("Loading SFT source %s", key)
+                # Prefer local JSON/JSONL under data_raw/<key>/ if present (仅对聚合版本生效)
+                local_dir = data_root / key
+                local_jsons: List[str] = []
+                if key == "mxode_chinese_instruct" and local_dir.exists():
+                    for pattern in ("*.jsonl", "*.json"):
+                        local_jsons.extend([str(p) for p in local_dir.glob(pattern)])
+                if key == "mxode_chinese_instruct" and local_jsons:
+                    LOGGER.info(
+                        "Detected %d local JSON/JSONL files for Chinese-Instruct; using local copies",
+                        len(local_jsons),
+                    )
+                    ds = load_dataset("json", data_files=local_jsons, split="train")
+                else:
+                    LOGGER.info("Downloading from Hugging Face for %s", key)
+                    ds = hf_load_dataset(
+                        meta["hf_path"],
+                        name=meta["config"],
+                        split=meta["split"],
+                        cache_dir=str(local_dir),
+                        dl_conf=dl_conf,
+                    )
+                    LOGGER.info("Download completed for %s", key)
+                records = convert_mxode_chinese_instruct(ds)
+                filtered = filter_by_language(records, min_cn_ratio, allow_english)
+                quality_checked = filter_by_quality(
+                    filtered,
+                    min_tokens=min_tokens,
+                    max_tokens=max_tokens,
+                    max_repetition=max_repetition,
+                )
+                deduped = dedupe_by_hash(quality_checked, "hash")
                 LOGGER.info(
-                    "Detected %d local JSON/JSONL files for Chinese-Instruct; using local copies",
-                    len(local_jsons),
+                    "SFT %s: raw=%d lang_filtered=%d quality=%d deduped=%d",
+                    key,
+                    len(records),
+                    len(filtered),
+                    len(quality_checked),
+                    len(deduped),
                 )
-                ds = load_dataset("json", data_files=local_jsons, split="train")
-            else:
-                ds = load_dataset(
-                    meta["hf_path"],
-                    name=meta["config"],
-                    split=meta["split"],
-                    cache_dir=str(local_dir),
-                    trust_remote_code=True,
-                )
-            records = convert_mxode_chinese_instruct(ds)
-            filtered = filter_by_language(records, min_cn_ratio, allow_english)
-            quality_checked = filter_by_quality(
-                filtered,
-                min_tokens=min_tokens,
-                max_tokens=max_tokens,
-                max_repetition=max_repetition,
-            )
-            deduped = dedupe_by_hash(quality_checked, "hash")
-            LOGGER.info(
-                "SFT %s: raw=%d lang_filtered=%d quality=%d deduped=%d",
-                key,
-                len(records),
-                len(filtered),
-                len(quality_checked),
-                len(deduped),
-            )
-            sft_entries.extend(deduped)
+                for e in deduped:
+                    e = dict(e)
+                    e["source"] = key
+                    sft_entries.append(e)
+                continue
+
+            # 其他未知键：提示用户
+            LOGGER.warning("Unknown SFT source key '%s' in mix; skip.", key)
+
         items = [to_sampling_item(entry, "SFT") for entry in sft_entries]
         plan = sampler.plan(
             total_samples=config["sft"]["max_samples"],
@@ -651,6 +834,7 @@ def execute_pipeline(config: Mapping[str, Any]) -> None:
     if stage in ("all", "pref"):
         pref_entries: List[Mapping[str, Any]] = []
         pref_weights: Mapping[str, float] = config.get("preference", {}).get("mix", {})
+        dl_conf = DownloadConfig(resume_download=True, max_retries=10) if DownloadConfig else None
         for key, meta in PREF_SPECS.items():
             if pref_weights and float(pref_weights.get(key, 0.0)) <= 0.0:
                 LOGGER.info("Skip preference source %s due to zero weight", key)
@@ -660,13 +844,15 @@ def execute_pipeline(config: Mapping[str, Any]) -> None:
             pref_cfg_map: Mapping[str, str] = config.get("preference", {}).get("configs", {})  # type: ignore[assignment]
             cfg_name = pref_cfg_map.get(key) if isinstance(pref_cfg_map, Mapping) else None
             cfg_name = cfg_name or meta["config"]
-            ds = load_dataset(
+            LOGGER.info("Downloading from Hugging Face for %s with config %s", key, cfg_name)
+            ds = hf_load_dataset(
                 meta["hf_path"],
                 name=cfg_name,
                 split=meta["split"],
                 cache_dir=str(data_root / key),
-                trust_remote_code=True,
+                dl_conf=dl_conf,
             )
+            LOGGER.info("Download completed for %s", key)
             mapped = [normalize_preference(key, row) for row in ds]
             prepared = [item for item in mapped if item]
             filtered = filter_by_language(prepared, min_cn_ratio, allow_english)
