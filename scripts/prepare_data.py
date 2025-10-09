@@ -727,18 +727,16 @@ def execute_pipeline(config: Mapping[str, Any]) -> None:
                 subset_names = MXODE_GROUPS[key]
                 LOGGER.info("Processing SFT group %s with %d subsets: %s", key, len(subset_names), ", ".join(subset_names))
 
-                # 使用 ProcessPoolExecutor 并行处理子集
-                # 限制 worker 数量，避免在 IO 密集和 CPU 密集混合场景下过度消耗资源
                 max_workers = min(len(subset_names), (os.cpu_count() or 4))
-                with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                    futures = []
+                total_raw = total_lang = total_quality = total_dedup = 0
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures: Dict[Any, str] = {}
                     for subset_name in subset_names:
                         ds = loaded_mxode_datasets.get(subset_name)
                         if ds is None:
                             LOGGER.warning("Dataset for subset '%s' was not loaded, skipping.", subset_name)
                             continue
-                        
-                        # 提交任务到进程池
+
                         future = executor.submit(
                             process_sft_subset,
                             subset_name=subset_name,
@@ -754,16 +752,30 @@ def execute_pipeline(config: Mapping[str, Any]) -> None:
                             seed=seed,
                             group_key=key,
                         )
-                        futures.append(future)
+                        futures[future] = subset_name
 
-                    # 收集结果
                     for future in as_completed(futures):
+                        subset_name = futures[future]
                         try:
-                            result_entries = future.result()
-                            sft_entries.extend(result_entries)
+                            result_entries, summary = future.result()
                         except Exception as exc:
-                            LOGGER.error("A worker process generated an exception: %s", exc, exc_info=True)
-                
+                            LOGGER.error("Subset %s processing failed: %s", subset_name, exc, exc_info=True)
+                            continue
+
+                        sft_entries.extend(result_entries)
+                        total_raw += summary["raw"]
+                        total_lang += summary["lang"]
+                        total_quality += summary["quality"]
+                        total_dedup += summary["dedup"]
+
+                LOGGER.info(
+                    "SFT %s (group): raw=%d lang_filtered=%d quality=%d deduped=%d",
+                    key,
+                    total_raw,
+                    total_lang,
+                    total_quality,
+                    total_dedup,
+                )
                 LOGGER.info("Finished processing SFT group %s. Total entries so far: %d", key, len(sft_entries))
                 continue
 
