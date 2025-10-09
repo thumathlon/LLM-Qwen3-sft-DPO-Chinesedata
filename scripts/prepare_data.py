@@ -583,6 +583,72 @@ def build_sampler(config: Mapping[str, Any]) -> MixedBucketSampler:
 
 
 # ---------------------------------------------------------------------------
+# Subset processing helpers (used by real pipeline)
+# ---------------------------------------------------------------------------
+
+
+def process_sft_subset(
+    *,
+    subset_name: str,
+    dataset: "Dataset",
+    min_cn_ratio: float,
+    allow_english: bool,
+    min_tokens: int,
+    max_tokens: int,
+    max_repetition: float,
+    config: Mapping[str, Any],
+    weight: float,
+    num_subsets: int,
+    seed: int,
+    group_key: str,
+) -> Tuple[List[Mapping[str, Any]], Dict[str, int]]:
+    """Process one Mxode/Chinese-Instruct subset and return normalized entries.
+
+    Returns a tuple of (entries, summary_counts). Each entry is a mapping ready
+    for sampling with fields like `messages`, `hash` and a `source` set to the
+    logical group (e.g., `mxode_stem`) so that group weights in the sampler
+    apply correctly. The original subset name is kept in `subset` for traceability.
+    """
+
+    # Map and filter
+    mapped = convert_mxode_chinese_instruct(dataset)
+    filtered = filter_by_language(mapped, min_cn_ratio, allow_english)
+    quality_checked = filter_by_quality(
+        filtered,
+        min_tokens=min_tokens,
+        max_tokens=max_tokens,
+        max_repetition=max_repetition,
+    )
+    deduped = dedupe_by_hash(quality_checked, "hash")
+
+    # Attach source/group metadata
+    out: List[Mapping[str, Any]] = []
+    for e in deduped:
+        item = dict(e)
+        item["source"] = group_key  # ensure sampler weights match the group key
+        item["subset"] = subset_name
+        out.append(item)
+
+    LOGGER.info(
+        "SFT %s/%s: raw=%d lang_filtered=%d quality=%d deduped=%d",
+        group_key,
+        subset_name,
+        len(mapped),
+        len(filtered),
+        len(quality_checked),
+        len(deduped),
+    )
+
+    summary = {
+        "raw": len(mapped),
+        "lang": len(filtered),
+        "quality": len(quality_checked),
+        "dedup": len(deduped),
+    }
+    return out, summary
+
+
+# ---------------------------------------------------------------------------
 # Dry-run plan and real pipeline
 # ---------------------------------------------------------------------------
 
